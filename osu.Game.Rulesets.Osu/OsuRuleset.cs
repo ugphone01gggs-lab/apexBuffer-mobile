@@ -230,6 +230,7 @@ namespace osu.Game.Rulesets.Osu
                         new MultiMod(new ModWindUp(), new ModWindDown()),
                         new OsuModBarrelRoll(),
                         new OsuModApproachDifferent(),
+                        new OsuModApexTest(),
                         new OsuModMuted(),
                         new OsuModNoScope(),
                         new MultiMod(new OsuModMagnetised(), new OsuModRepel()),
