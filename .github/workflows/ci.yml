@@ -45,6 +45,30 @@ jobs:
           name: osu-test-results-${{matrix.os.prettyname}}-${{matrix.threadingMode}}
           path: ${{github.workspace}}/**/TestResults/TestResults-${{matrix.os.prettyname}}-${{matrix.threadingMode}}.trx
 
+  build-windows-game:
+    name: Build Windows game
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install .NET 10.0.x
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish Windows game
+        run: dotnet publish osu.Desktop/osu.Desktop.csproj -c Release -r win-x64 --self-contained true -o publish/windows
+
+      - name: Compress Windows game
+        run: Compress-Archive -Path publish/windows -DestinationPath apexbuffer-windows-x64.zip
+
+      - name: Upload Windows game
+        uses: actions/upload-artifact@v7
+        with:
+          name: apexbuffer-windows-x64
+          path: apexbuffer-windows-x64.zip
+
   build-only-android:
     name: Build only (Android)
     runs-on: windows-latest
