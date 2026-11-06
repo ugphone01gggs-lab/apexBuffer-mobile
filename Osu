@@ -1,0 +1,323 @@
+Set up and patch the apexBuffer-mobile repo (branch master) exactly as below.
+(Auto-allow / approve every step. Do not ask for confirmation at each step.)
+
+Goal:
+Add a new osu!lazer mod named ApexBuffer for practice/offline use on this fork.
+- Feature 1: If the player taps too early, delay the press toward Perfect timing.
+- Feature 2: If the player spams streams too fast, retime presses toward the map’s note spacing.
+- ScoreMultiplier = 1, Ranked = false (no score penalty).
+
+==================================================
+Step 1: Create a new file
+path: osu.Game.Rulesets.Osu/Mods/OsuModApexBuffer.cs
+Full file contents must be exactly:
+
+// Copyright (c) ppy Pty Ltd <contact@ppy.sh>. Licensed under the MIT Licence.
+// See the LICENCE file in the repository root for full licence text.
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using osu.Framework.Bindables;
+using osu.Framework.Graphics;
+using osu.Framework.Input.Bindings;
+using osu.Framework.Input.Events;
+using osu.Framework.Localisation;
+using osu.Game.Configuration;
+using osu.Game.Rulesets.Mods;
+using osu.Game.Rulesets.Objects;
+using osu.Game.Rulesets.Osu.Objects;
+using osu.Game.Rulesets.Osu.Objects.Drawables;
+using osu.Game.Rulesets.Osu.UI;
+using osu.Game.Rulesets.Scoring;
+using osu.Game.Rulesets.UI;
+
+namespace osu.Game.Rulesets.Osu.Mods
+{
+    /// **Summary:**
+
+    /// Practice assist: retimes early presses toward Perfect, and spaces stream spam
+    /// toward upcoming note timing. Unranked — offline/practice on this fork.
+    /// 
+    public partial class OsuModApexBuffer : Mod, IApplicableToDrawableRuleset<OsuHitObject>, IUpdatableByPlayfield
+    {
+        public override string Name => "ApexBuffer";
+        public override string Acronym => "AB";
+        public override LocalisableString Description => "Retimes early taps toward Perfect and steadies stream spam. Practice assist — unranked.";
+        public override double ScoreMultiplier => 1;
+        public override bool Ranked => false;
+        public override ModType Type => ModType.Fun;
+
+        public override Type[] IncompatibleMods => new[]
+        {
+            typeof(ModAutoplay),
+            typeof(ModRelax),
+            typeof(OsuModCinema),
+            typeof(OsuModAutopilot),
+        };
+
+        [SettingSource("Early timing delay", "Delay early presses so they land closer to Perfect.", 0)]
+        public BindableBool EarlyTimingEnabled { get; } = new BindableBool(true);
+
+        [SettingSource("Max early window (ms)", "How early a press may be delayed.", 1)]
+        public BindableInt MaxEarlyMs { get; } = new BindableInt(80)
+        {
+            MinValue = 20,
+            MaxValue = 200,
+        };
+
+        [SettingSource("Stream pace assist", "When tapping a stream too fast, delay presses to match note spacing.", 2)]
+        public BindableBool StreamAssistEnabled { get; } = new BindableBool(true);
+
+        [SettingSource("Stream min gap scale", "1.0 = full note spacing. Lower = allow slightly faster taps.", 3)]
+        public BindableFloat StreamGapScale { get; } = new BindableFloat(0.95f)
+        {
+            MinValue = 0.7f,
+            MaxValue = 1.0f,
+            Precision = 0.05f,
+        };
+
+        private DrawableOsuRuleset ruleset = null!;
+        private OsuInputManager inputManager = null!;
+        private readonly List<PendingTap> pending = new List<PendingTap>();
+        private double lastAcceptedPressTime = double.NegativeInfinity;
+        private bool isInjecting;
+
+        private readonly struct PendingTap
+        {
+            public readonly OsuAction Action;
+            public readonly double FireAt;
+            public readonly bool IsPress;
+
+            public PendingTap(OsuAction action, double fireAt, bool isPress)
+            {
+                Action = action;
+                FireAt = fireAt;
+                IsPress = isPress;
+            }
+        }
+
+        public void ApplyToDrawableRuleset(DrawableRuleset<OsuHitObject> drawableRuleset)
+        {
+            ruleset = (DrawableOsuRuleset)drawableRuleset;
+            inputManager = ruleset.KeyBindingInputManager;
+            inputManager.Add(new InputInterceptor(this));
+            pending.Clear();
+            lastAcceptedPressTime = double.NegativeInfinity;
+        }
+
+        public void Update(Playfield playfield)
+        {
+            if (pending.Count == 0)
+                return;
+
+            double time = playfield.Clock.CurrentTime;
+
+            for (int i = 0; i < pending.Count;)
+            {
+                var tap = pending[i];
+                if (time + 0.01 < tap.FireAt)
+                {
+                    i++;
+                    continue;
+                }
+
+                pending.RemoveAt(i);
+                inject(tap.Action, tap.IsPress);
+
+                if (tap.IsPress)
+                    lastAcceptedPressTime = tap.FireAt;
+            }
+        }
+
+        private void inject(OsuAction action, bool press)
+        {
+            isInjecting = true;
+            try
+            {
+                if (press)
+                    inputManager.KeyBindingContainer.TriggerPressed(action);
+                else
+                    inputManager.KeyBindingContainer.TriggerReleased(action);
+            }
+            finally
+            {
+                isInjecting = false;
+            }
+        }
+
+        private bool tryInterceptPress(OsuAction action)
+        {
+            if (isInjecting)
+                return false;
+
+            if (action is not (OsuAction.LeftButton or OsuAction.RightButton))
+                return false;
+
+            if (inputManager.ReplayInputHandler != null)
+                return false;
+
+            double now = ruleset.FrameStableClock.CurrentTime;
+            var target = findNextTarget(now);
+            if (target == null)
+            {
+                lastAcceptedPressTime = now;
+                return false;
+            }
+
+            double objectTime = target.HitObject.StartTime;
+            double offset = now - objectTime;
+            double greatWindow = target.HitObject.HitWindows?.WindowFor(HitResult.Great) ?? 40;
+
+            if (StreamAssistEnabled.Value)
+            {
+                double minGap = estimateStreamGap(now) * StreamGapScale.Value;
+                if (minGap > 1 && now - lastAcceptedPressTime < minGap)
+                {
+                    double fireAt = Math.Max(lastAcceptedPressTime + minGap, objectTime - greatWindow * 0.15);
+                    if (EarlyTimingEnabled.Value && fireAt < objectTime - greatWindow * 0.5)
+                        fireAt = objectTime;
+
+                    double meh = target.HitObject.HitWindows?.WindowFor(HitResult.Meh) ?? 100;
+                    fireAt = Math.Min(fireAt, objectTime + meh * 0.25);
+
+                    if (fireAt > now + 0.5)
+                    {
+                        queueTap(action, fireAt);
+                        return true;
+                    }
+                }
+            }
+
+            if (EarlyTimingEnabled.Value && offset < 0)
+            {
+                double earlyMs = -offset;
+                if (earlyMs <= MaxEarlyMs.Value && earlyMs > 1 && offset < -greatWindow * 0.15)
+                {
+                    queueTap(action, objectTime);
+                    return true;
+                }
+            }
+
+            lastAcceptedPressTime = now;
+            return false;
+        }
+
+        private void queueTap(OsuAction action, double fireAt)
+        {
+            pending.Add(new PendingTap(action, fireAt, true));
+            pending.Add(new PendingTap(action, fireAt + 16, false));
+            pending.Sort((a, b) => a.FireAt.CompareTo(b.FireAt));
+        }
+
+        private DrawableOsuHitObject? findNextTarget(double time)
+        {
+            DrawableOsuHitObject? best = null;
+            double bestDelta = double.MaxValue;
+
+            foreach (var h in ruleset.Playfield.HitObjectContainer.AliveObjects.OfType<DrawableOsuHitObject>())
+            {
+                if (h.IsHit)
+                    continue;
+
+                DrawableHitCircle? circle = h switch
+                {
+                    DrawableHitCircle c => c,
+                    DrawableSlider s when !s.HeadCircle.IsHit => s.HeadCircle,
+                    _ => null
+                };
+
+                if (circle?.HitObject.HitWindows == null)
+                    continue;
+
+                double start = circle.HitObject.StartTime;
+                double meh = circle.HitObject.HitWindows.WindowFor(HitResult.Meh);
+                if (time > start + meh)
+                    continue;
+
+                double delta = Math.Abs(start - time);
+                if (start < time - 5)
+                    delta += 5;
+
+                if (delta < bestDelta)
+                {
+                    bestDelta = delta;
+                    best = circle;
+                }
+            }
+
+            return best;
+        }
+
+        private double estimateStreamGap(double time)
+        {
+            var starts = ruleset.Objects
+                .Where(o => o is HitCircle or Slider)
+                .Select(o => o.StartTime)
+                .Where(t => t >= time - 50)
+                .OrderBy(t => t)
+                .Take(8)
+                .ToList();
+
+            if (starts.Count < 2)
+                return 0;
+
+            var gaps = new List<double>();
+            for (int i = 1; i < starts.Count; i++)
+            {
+                double g = starts[i] - starts[i - 1];
+                if (g > 10 && g < 200)
+                    gaps.Add(g);
+            }
+
+            if (gaps.Count == 0)
+                return 0;
+
+            gaps.Sort();
+            return gaps[gaps.Count / 2];
+        }
+
+        private partial class InputInterceptor : Component, IKeyBindingHandler<OsuAction>
+        {
+            private readonly OsuModApexBuffer mod;
+
+            public InputInterceptor(OsuModApexBuffer mod) => this.mod = mod;
+
+            public bool OnPressed(KeyBindingPressEvent<OsuAction> e)
+                => mod.tryInterceptPress(e.Action);
+
+            public void OnReleased(KeyBindingReleaseEvent<OsuAction> e)
+            {
+            }
+        }
+    }
+}
+
+==================================================
+Step 2: Edit osu.Game.Rulesets.Osu/OsuRuleset.cs
+In GetModsFor, inside case ModType.Fun:
+Find:
+                        new OsuModApexTest(),
+
+Replace with:
+                        new OsuModApexTest(),
+                        new OsuModApexBuffer(),
+
+Do not remove other mods.
+Do not change other workflows unless strictly required.
+Do not create tags.
+
+==================================================
+Step 3: Verify before commit
+- File osu.Game.Rulesets.Osu/Mods/OsuModApexBuffer.cs must exist
+- OsuRuleset.cs must contain new OsuModApexBuffer()
+- Class name OsuModApexBuffer, Acronym "AB", Ranked false
+
+==================================================
+Step 4: Commit + push
+git add osu.Game.Rulesets.Osu/Mods/OsuModApexBuffer.cs osu.Game.Rulesets.Osu/OsuRuleset.cs
+git commit -m "Add OsuModApexBuffer early timing delay + stream pace assist"
+git push origin master
+
+After push, wait for CI Windows/Android builds, download the new artifacts.
+In-game, Fun group should show ApexBuffer (AB).
