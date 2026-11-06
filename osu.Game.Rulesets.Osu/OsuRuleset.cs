@@ -231,6 +231,7 @@ namespace osu.Game.Rulesets.Osu
                         new OsuModBarrelRoll(),
                         new OsuModApproachDifferent(),
                         new OsuModApexTest(),
+                        new OsuModApexBuffer(),
                         new OsuModMuted(),
                         new OsuModNoScope(),
                         new MultiMod(new OsuModMagnetised(), new OsuModRepel()),
