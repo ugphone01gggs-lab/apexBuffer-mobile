@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="sh.ppy.osulazer" android:installLocation="auto">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.apexbuffer.osulazer" android:installLocation="auto">
 	<uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />
 	<application android:allowBackup="true"
 				 android:supportsRtl="true"
@@ -7,7 +7,7 @@
 				 android:icon="@mipmap/ic_launcher"
 				 android:roundIcon="@mipmap/ic_launcher">
         <provider android:name="androidx.core.content.FileProvider"
-                  android:authorities="sh.ppy.osulazer.fileprovider"
+                  android:authorities="com.apexbuffer.osulazer.fileprovider"
                   android:grantUriPermissions="true"
                   android:exported="false">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS"
