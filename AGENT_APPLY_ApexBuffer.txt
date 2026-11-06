@@ -1,0 +1,24 @@
+Update apexBuffer-mobile (branch master).
+(Auto-allow / approve every step. Do not ask for confirmation.)
+
+Goal:
+Replace OsuModApexBuffer with the auto-adaptive delay version to stop long delays that cause misses.
+
+Steps:
+1. Copy the attached/uploaded file OsuModApexBuffer.cs over:
+   osu.Game.Rulesets.Osu/Mods/OsuModApexBuffer.cs
+   (full replace)
+
+2. Verify:
+   - computeAdaptiveFireAt exists
+   - Max early default is 50
+   - hard wait cap 36ms
+   - pending.Clear() before queue
+   - OsuRuleset.cs still has: new OsuModApexBuffer(),
+
+3. Commit + push:
+git add osu.Game.Rulesets.Osu/Mods/OsuModApexBuffer.cs
+git commit -m "ApexBuffer: auto-adaptive delay, hard cap wait to prevent misses"
+git push origin master
+
+4. Wait for CI, download new Windows/Android artifacts, retest Fun mod ApexBuffer (AB).
