@@ -94,3 +94,18 @@ jobs:
       - name: Compile
         run: dotnet build -c Debug osu.Android.slnf
 
+      - name: Find Android APK
+        run: |
+          $apkFiles = Get-ChildItem -Path osu.Android/bin -Filter *.apk -Recurse -ErrorAction SilentlyContinue
+          if (-not $apkFiles) {
+            throw "No APK found under osu.Android/bin."
+          }
+          $apkFiles | ForEach-Object { $_.FullName }
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: apexbuffer-android
+          path: osu.Android/bin/**/*.apk
+          if-no-files-found: error
+
